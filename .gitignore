@@ -1,0 +1,43 @@
+# Secrets and local env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python
+backend/.venv/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/.mypy_cache/
+backend/*.egg-info/
+backend/dist/
+backend/htmlcov/
+backend/.coverage
+backend/uploads/
+backend/data/vector_store/
+backend/data/media/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/.turbo/
+
+# OS / IDE
+.DS_Store
+.cursor/
+.idea/
+.vscode/
+*.swp
+
+# Local runtime
+postgres-data/
+redis-data/
+uploads/
+vector_store/
+backend/test-interviewos.db
+backend/local.db
+backend/uploads-test/

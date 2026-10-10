@@ -1,0 +1,14 @@
+[
+  {
+    "question_key": "py_mutability",
+    "answer": "Mutable vs immutable objects differ in whether they can change in place. Object identity is not the same as equality, so two names can alias the same list. Default argument evaluation happens once at definition time, which is why lists or dicts as defaults are shared.",
+    "human_score": 82,
+    "expected_missing": []
+  },
+  {
+    "question_key": "rag_hybrid",
+    "answer": "I would just use ChatGPT.",
+    "human_score": 20,
+    "expected_missing": ["bm25", "dense embeddings", "reciprocal rank fusion"]
+  }
+]
