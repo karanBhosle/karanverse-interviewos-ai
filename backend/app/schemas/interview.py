@@ -47,6 +47,7 @@ class InterviewPlanOut(ORMModel):
 class SessionCreate(BaseModel):
     plan_id: UUID
     visual_consent: bool = False
+    speech_assisted: bool = True
 
 
 class QuestionOut(BaseModel):
@@ -71,6 +72,7 @@ class AnswerSubmit(BaseModel):
     duration_seconds: float | None = None
     request_help: bool = False
     visual_features: list[dict[str, Any]] | None = None
+    transcript_provenance: Literal["typed", "speech_to_text"] = "typed"
 
 
 class ChallengeRequest(BaseModel):
@@ -104,6 +106,7 @@ class SessionOut(ORMModel):
     uncovered_competencies: list[str]
     follow_up_count: int
     provider_available: bool
+    speech_assisted: bool = False
     current_question: QuestionOut | None = None
 
 

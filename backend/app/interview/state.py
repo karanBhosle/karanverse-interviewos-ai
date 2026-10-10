@@ -31,6 +31,7 @@ class InterviewGraphState(BaseModel):
     max_llm_calls: int = 20
     max_tokens: int = 80_000
     provider_available: bool = False
+    speech_assisted: bool = True
     status: Literal["planning", "asking", "evaluating", "follow_up", "aggregating", "complete", "failed"] = "planning"
     errors: list[str] = Field(default_factory=list)
     skill_gaps: list[dict[str, Any]] = Field(default_factory=list)

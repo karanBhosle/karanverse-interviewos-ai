@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     visual_frame_sample_hz: float = 2.0
     visual_max_width: int = 640
 
+    tts_voice: str = "en-IN-NeerjaNeural"
+    tts_rate: str = "-8%"
+    tts_pitch: str = "-3Hz"
+
     cors_origins: str = "http://localhost:3000"
     rate_limit_per_minute: int = 120
 

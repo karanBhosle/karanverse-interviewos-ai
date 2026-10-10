@@ -117,6 +117,7 @@ async def test_session_persistence_and_failed_llm(auth_client):
         json={"plan_id": plan.json()["id"], "visual_consent": False},
     )
     assert session.status_code == 200
+    assert session.json()["speech_assisted"] is True
     question = session.json()["current_question"]
     assert question is not None
     answered = await auth_client.post(
@@ -127,6 +128,7 @@ async def test_session_persistence_and_failed_llm(auth_client):
                 "I would treat this as a typed state machine with deterministic scoring, "
                 "iteration limits, and fail-closed evaluation when the model is unavailable."
             ),
+            "transcript_provenance": "speech_to_text",
         },
     )
     assert answered.status_code == 200
@@ -136,6 +138,7 @@ async def test_session_persistence_and_failed_llm(auth_client):
     report = await auth_client.get(f"/api/v1/interview-sessions/{session.json()['id']}/report")
     assert report.status_code == 200
     assert report.json()["answers"]
+    assert report.json()["communication_feedback"][0]["transcript_provenance"] == "speech_to_text"
 
 
 @pytest.mark.asyncio
@@ -163,3 +166,20 @@ async def test_visual_feedback_requires_consent(auth_client):
         json={"consent": True, "frames": []},
     )
     assert ingest.json()["accepted"] is False
+
+
+@pytest.mark.asyncio
+async def test_tts_returns_neural_audio(auth_client, monkeypatch):
+    async def fake_indian(text, voice, rate, pitch):
+        assert "Python" in text
+        assert voice == "en-IN-NeerjaNeural"
+        return b"ID3FAKEAUDIO", "audio/mpeg"
+
+    monkeypatch.setattr("app.services.tts._neural_indian", fake_indian)
+    empty = await auth_client.post("/api/v1/tts", json={"text": ""})
+    assert empty.status_code == 422
+    spoken = await auth_client.post("/api/v1/tts", json={"text": "Explain Python lists and tuples."})
+    assert spoken.status_code == 200
+    assert spoken.headers["content-type"].startswith("audio/")
+    assert spoken.headers["x-interviewos-voice"] == "en-IN-NeerjaNeural"
+    assert spoken.content.startswith(b"ID3")

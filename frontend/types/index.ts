@@ -86,6 +86,7 @@ export type Session = {
   uncovered_competencies: string[];
   follow_up_count: number;
   provider_available: boolean;
+  speech_assisted: boolean;
   current_question: Question | null;
 };
 

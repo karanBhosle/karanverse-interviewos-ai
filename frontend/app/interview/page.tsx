@@ -38,7 +38,10 @@ export default function InterviewSetupPage() {
   const [resumeId, setResumeId] = useState<string>();
   const [jobId, setJobId] = useState<string>();
   const [webcam, setWebcam] = useState(false);
+  const [speech, setSpeech] = useState(true);
+  const [faceToFace, setFaceToFace] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [speechConsent, setSpeechConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -47,7 +50,7 @@ export default function InterviewSetupPage() {
         <div>
           <h1 className="text-2xl font-semibold">Interview setup</h1>
           <p className="text-sm text-muted-foreground">
-            Choose a mode, duration, and whether this session is text-only or webcam-assisted.
+            Choose a mode, duration, and whether this session is spoken face-to-face or text-only.
           </p>
         </div>
         <Card>
@@ -128,12 +131,45 @@ export default function InterviewSetupPage() {
               </select>
             </label>
             <label className="flex items-start gap-3 text-sm">
+              <Checkbox
+                checked={faceToFace}
+                onCheckedChange={(value) => {
+                  const next = Boolean(value);
+                  setFaceToFace(next);
+                  if (next) {
+                    setWebcam(true);
+                    setSpeech(true);
+                  }
+                }}
+              />
+              <span>
+                Face-to-face spoken interview. The interviewer reads each question aloud, you answer out loud, and
+                the camera stays on for presence. Audio is transcribed in the browser and is not uploaded.
+              </span>
+            </label>
+            <label className="flex items-start gap-3 text-sm">
+              <Checkbox checked={speech} onCheckedChange={(value) => setSpeech(Boolean(value))} />
+              <span>
+                Spoken answers. Record your voice, convert it to text, then score the transcript. You can still
+                edit the transcript before submit.
+              </span>
+            </label>
+            <label className="flex items-start gap-3 text-sm">
               <Checkbox checked={webcam} onCheckedChange={(value) => setWebcam(Boolean(value))} />
               <span>
                 Enable optional webcam-assisted mode. Frames are processed locally by default. Denying camera
-                permission still allows a full text interview.
+                permission still allows a full spoken or typed interview.
               </span>
             </label>
+            {speech ? (
+              <label className="flex items-start gap-3 text-sm">
+                <Checkbox checked={speechConsent} onCheckedChange={(value) => setSpeechConsent(Boolean(value))} />
+                <span>
+                  I consent to microphone use. My spoken answers will be transcribed in the browser. Audio is not
+                  uploaded unless I later change privacy settings.
+                </span>
+              </label>
+            ) : null}
             {webcam ? (
               <label className="flex items-start gap-3 text-sm">
                 <Checkbox checked={consent} onCheckedChange={(value) => setConsent(Boolean(value))} />
@@ -149,7 +185,16 @@ export default function InterviewSetupPage() {
               </Alert>
             ) : null}
             <Button
+              disabled={(speech && !speechConsent) || (webcam && !consent)}
               onClick={async () => {
+                if (speech && !speechConsent) {
+                  setError("Consent to microphone use before starting a spoken interview.");
+                  return;
+                }
+                if (webcam && !consent) {
+                  setError("Consent to camera use before starting a webcam-assisted interview.");
+                  return;
+                }
                 try {
                   const plan = await api.post<{ id: string }>("/api/v1/interview-plans", {
                     resume_id: resumeId,
@@ -163,6 +208,7 @@ export default function InterviewSetupPage() {
                   const session = await api.post<Session>("/api/v1/interview-sessions", {
                     plan_id: plan.id,
                     visual_consent: webcam && consent,
+                    speech_assisted: speech,
                   });
                   router.push(`/interview/${session.id}`);
                 } catch (err) {

@@ -118,7 +118,13 @@ async def create_plan(db: AsyncSession, user: User, payload) -> InterviewPlan:
     return plan
 
 
-async def start_session(db: AsyncSession, user: User, plan_id: UUID, visual_consent: bool) -> InterviewSession:
+async def start_session(
+    db: AsyncSession,
+    user: User,
+    plan_id: UUID,
+    visual_consent: bool,
+    speech_assisted: bool = True,
+) -> InterviewSession:
     plan = await db.scalar(select(InterviewPlan).where(InterviewPlan.id == plan_id))
     if plan is None:
         raise NotFoundError("Interview plan not found")
@@ -145,6 +151,7 @@ async def start_session(db: AsyncSession, user: User, plan_id: UUID, visual_cons
         max_llm_calls=settings.session_max_llm_calls,
         max_tokens=settings.session_max_tokens,
         provider_available=settings.llm_configured,
+        speech_assisted=speech_assisted,
     )
     state = graph_singleton.invoke(state)
     session = InterviewSession(
@@ -241,6 +248,7 @@ def session_payload(session: InterviewSession) -> dict:
         "uncovered_competencies": session.uncovered_competencies,
         "follow_up_count": session.follow_up_count,
         "provider_available": session.provider_available,
+        "speech_assisted": bool((session.graph_state or {}).get("speech_assisted", True)),
         "current_question": _question_out(question),
     }
 
@@ -262,7 +270,11 @@ async def submit_answer(db: AsyncSession, user: User, session_id: UUID, payload)
         ended_at=payload.ended_at or _utcnow(),
         duration_seconds=payload.duration_seconds,
         transcript_text=payload.raw_text,
-        transcript_provenance="typed",
+        transcript_provenance=(
+            payload.transcript_provenance
+            if getattr(payload, "transcript_provenance", "typed") in {"typed", "speech_to_text"}
+            else "typed"
+        ),
         filler_word_count=filler_word_count(payload.raw_text),
     )
     question.ended_at = answer.ended_at
@@ -484,7 +496,8 @@ async def _build_report(
                 "question_id": str(answer.question_id),
                 "filler_word_count": answer.filler_word_count,
                 "duration_seconds": answer.duration_seconds,
-                "note": "Filler counts and duration are descriptive. They are not proof of nervousness.",
+                "transcript_provenance": answer.transcript_provenance,
+                "note": "Filler counts and duration are descriptive. They are not proof of nervousness. Spoken answers are scored from the transcript, not from the raw audio.",
             }
             for answer in session.answers
         ],

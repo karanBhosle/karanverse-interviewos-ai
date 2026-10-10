@@ -32,7 +32,9 @@ async def create_plan(
 async def create_session(
     payload: SessionCreate, user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> SessionOut:
-    session = await interview_service.start_session(db, user, payload.plan_id, payload.visual_consent)
+    session = await interview_service.start_session(
+        db, user, payload.plan_id, payload.visual_consent, payload.speech_assisted
+    )
     return SessionOut(**interview_service.session_payload(session))
 
 

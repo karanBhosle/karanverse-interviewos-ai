@@ -66,13 +66,13 @@ Upload PDF/DOCX or paste text. Extracted skills keep a source section and an evi
 
 ### Interview setup
 
-Pick role, mode (including GenAI and LLMs), difficulty, duration, optional resume and job context, and optional webcam. Webcam frames stay local unless the candidate consents to server-side visual analysis. Camera denial still allows a full text interview.
+Pick role, mode (including GenAI and LLMs), difficulty, duration, optional resume and job context, spoken answers, and optional webcam. A face-to-face session reads the question aloud, records the candidate, and transcribes speech to text for scoring. Audio stays in the browser. Webcam frames stay local unless the candidate consents to server-side visual analysis. Camera or microphone denial still allows a typed interview.
 
 ![Interview setup](docs/screenshots/03-interview-setup.png)
 
 ### Interview room
 
-One question at a time, with topic, learning objective, and a timer. Help and reference answers stay hidden until requested. The badge shows whether an LLM provider is available or the session is on deterministic evaluation only.
+One question at a time, with topic, learning objective, and a timer. In spoken mode the interviewer voice reads the prompt, the candidate answers out loud, and the transcript is what gets scored. Help and reference answers stay hidden until requested. The badge shows whether an LLM provider is available or the session is on deterministic evaluation only.
 
 ![Interview room](docs/screenshots/04-interview-room.png)
 

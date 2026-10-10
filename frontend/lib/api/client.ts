@@ -78,8 +78,42 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+async function requestBlob(path: string, body: unknown, signal?: AbortSignal): Promise<Blob> {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const auth = token();
+  if (auth) headers.set("Authorization", `Bearer ${auth}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ApiError(
+      `Cannot reach the InterviewOS API at ${API_URL}. Start the backend and confirm NEXT_PUBLIC_API_URL.`,
+      0,
+      null,
+    );
+  }
+  if (!response.ok) {
+    const text = await response.text();
+    let data: unknown = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { message: text.slice(0, 240) };
+    }
+    throw new ApiError(readErrorMessage(data, response.statusText || "Request failed"), response.status, data);
+  }
+  return response.blob();
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  postBlob: (path: string, body: unknown, signal?: AbortSignal) => requestBlob(path, body, signal),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, {
       method: "POST",
