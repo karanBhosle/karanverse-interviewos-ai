@@ -23,7 +23,7 @@ from app.models.interview import (
     InterviewQuestion,
     InterviewSession,
 )
-from app.models.job import JobMatch
+from app.models.job import JobMatch, JobMatchItem, JobRequirement
 from app.models.learning import LearningPlan, LearningTask, SkillGap
 from app.models.resume import ResumeVersion
 from app.models.user import User
@@ -77,7 +77,12 @@ async def create_plan(db: AsyncSession, user: User, payload) -> InterviewPlan:
             .order_by(JobMatch.created_at.desc())
         )
         if match:
-            missing = [item.skill for item in match.items if item.matching_status == "missing"]
+            missing_rows = await db.execute(
+                select(JobRequirement.skill)
+                .join(JobMatchItem, JobMatchItem.requirement_id == JobRequirement.id)
+                .where(JobMatchItem.match_id == match.id, JobMatchItem.matching_status == "missing")
+            )
+            missing = list(missing_rows.scalars())
     prior_gaps = [
         gap.skill
         for gap in await db.scalars(
