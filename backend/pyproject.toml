@@ -1,6 +1,6 @@
 [project]
 name = "interviewos-backend"
-version = "0.1.0"
+version = "1.0.0"
 description = "InterviewOS AI — personal interview and career intelligence API"
 requires-python = ">=3.12"
 dependencies = [

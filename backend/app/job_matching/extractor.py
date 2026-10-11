@@ -4,7 +4,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from app.resume.ontology import normalize_skill
+from app.resume.ontology import SKILL_ALIASES, normalize_skill
 
 IMPORTANCE_HINTS = {
     "required": "required",
@@ -54,44 +54,59 @@ def infer_importance(text: str) -> tuple[str, float]:
 def extract_requirements(job_text: str) -> list[dict[str, Any]]:
     requirements: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for match in REQUIREMENT_LINE.finditer(job_text):
-        text = match.group("text").strip()
-        skill = _primary_skill(text)
-        if not skill or skill in seen:
-            continue
-        importance, weight = infer_importance(text)
-        seen.add(skill)
+
+    def add(skill: str, description: str, importance: str | None = None, weight: float | None = None) -> None:
+        canon = normalize_skill(skill)
+        if not canon or canon in seen:
+            return
+        inferred, inferred_weight = infer_importance(description)
+        seen.add(canon)
         requirements.append(
             {
                 "requirement_key": f"req_{uuid4().hex[:8]}",
-                "skill": skill,
-                "description": text,
-                "importance": importance,
-                "weight": weight,
+                "skill": canon,
+                "description": description,
+                "importance": importance or inferred,
+                "weight": weight if weight is not None else inferred_weight,
                 "provenance": "job_requirement_inference",
             }
         )
+
+    for match in REQUIREMENT_LINE.finditer(job_text):
+        text = match.group("text").strip()
+        found = _skills_in_text(text)
+        if not found:
+            primary = _primary_skill(text)
+            if primary:
+                found = [primary]
+        for skill in found:
+            add(skill, text)
+    lowered = job_text.lower()
     for competency in KNOWN_COMPETENCIES:
-        if competency in job_text.lower() and competency not in seen:
-            seen.add(competency)
-            requirements.append(
-                {
-                    "requirement_key": f"req_{uuid4().hex[:8]}",
-                    "skill": competency,
-                    "description": f"Job description mentions {competency}.",
-                    "importance": "core",
-                    "weight": 1.0,
-                    "provenance": "job_requirement_inference",
-                }
-            )
+        if competency in lowered:
+            add(competency, f"Job description mentions {competency}.")
+    for alias, canon in SKILL_ALIASES.items():
+        if re.search(rf"\b{re.escape(alias)}\b", lowered):
+            add(canon, f"Job description mentions {alias}.")
     return requirements[:24]
 
 
-def _primary_skill(text: str) -> str | None:
+def _skills_in_text(text: str) -> list[str]:
     lowered = text.lower()
+    found: list[str] = []
     for competency in KNOWN_COMPETENCIES:
         if competency in lowered:
-            return competency
+            found.append(competency)
+    for alias, canon in SKILL_ALIASES.items():
+        if re.search(rf"\b{re.escape(alias)}\b", lowered) and canon not in found:
+            found.append(canon)
+    return found
+
+
+def _primary_skill(text: str) -> str | None:
+    found = _skills_in_text(text)
+    if found:
+        return found[0]
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9+#.]{1,30}", text)
     if tokens:
         return normalize_skill(tokens[0])

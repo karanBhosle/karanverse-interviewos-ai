@@ -12,8 +12,11 @@ from app.core.errors import NotFoundError, ValidationAppError
 from app.core.security import assert_owner
 from app.evaluation.scoring import filler_word_count
 from app.interview.bank import get_question
+from app.interview.context import prompts_match
 from app.interview.graph import InterviewGraph
 from app.interview.planner import plan_interview
+from app.interview.question_gen import generate_resume_jd_questions
+from app.interview.speech_lexicon import build_speech_lexicon, correct_transcript
 from app.interview.state import InterviewGraphState
 from app.learning.planner import plan_from_gaps
 from app.models.interview import (
@@ -29,8 +32,8 @@ from app.models.resume import ResumeVersion
 from app.models.user import User
 from app.models.vision import VisualFeatureSummary
 from app.repositories.audit import write_audit
-from app.services.coach import looks_unsure, spoken_bridge
-from app.services.resume_service import get_job, get_resume
+from app.services.coach import looks_closing, looks_unsure, spoken_bridge
+from app.services.resume_service import create_match, get_job, get_resume
 from app.vision.pipeline import presentation_checklist
 
 graph_singleton = InterviewGraph()
@@ -60,36 +63,86 @@ def _question_out(question: InterviewQuestion | None, *, reveal_reference: bool 
     )
 
 
+async def _job_context(db: AsyncSession, user: User, job_id: UUID | None, resume_id: UUID | None) -> dict:
+    if not job_id:
+        return {}
+    job = await get_job(db, user, job_id)
+    match = await db.scalar(
+        select(JobMatch)
+        .options(selectinload(JobMatch.items))
+        .where(JobMatch.user_id == user.id, JobMatch.job_id == job.id)
+        .order_by(JobMatch.created_at.desc())
+    )
+    if match is None and resume_id:
+        try:
+            created, _items = await create_match(db, user, resume_id, job.id)
+            match = await db.scalar(
+                select(JobMatch).options(selectinload(JobMatch.items)).where(JobMatch.id == created.id)
+            )
+        except Exception:
+            match = None
+    status_by_skill: dict[str, str] = {}
+    missing: list[str] = []
+    strong: list[str] = []
+    if match:
+        rows = await db.execute(
+            select(JobRequirement.skill, JobMatchItem.matching_status)
+            .join(JobMatchItem, JobMatchItem.requirement_id == JobRequirement.id)
+            .where(JobMatchItem.match_id == match.id)
+        )
+        for skill, status in rows.all():
+            status_by_skill[skill] = status
+            if status == "missing":
+                missing.append(skill)
+            elif status in {"strong", "partial"}:
+                strong.append(skill)
+    requirements = [
+        {
+            "skill": req.skill,
+            "description": req.description,
+            "status": status_by_skill.get(req.skill, "unknown"),
+        }
+        for req in job.requirements
+    ]
+    return {
+        "title": job.title,
+        "company": job.company or "",
+        "requirements": requirements,
+        "missing": missing,
+        "strong": strong,
+        "overlap": strong,
+        "prepared_questions": list((getattr(match, "prepared_questions", None) or []) if match else []),
+    }
+
+
 async def create_plan(db: AsyncSession, user: User, payload) -> InterviewPlan:
     resume_version_id = None
     resume_skills: list[str] = []
-    missing: list[str] = []
+    resume_summary: dict = {}
     if payload.resume_id:
         _, version = await get_resume(db, user, payload.resume_id)
         if version:
             resume_version_id = version.id
-            resume_skills = list((version.structured_json or {}).get("technologies") or [])
-    if payload.job_id:
-        await get_job(db, user, payload.job_id)
-        match = await db.scalar(
-            select(JobMatch)
-            .options(selectinload(JobMatch.items))
-            .where(JobMatch.user_id == user.id, JobMatch.job_id == payload.job_id)
-            .order_by(JobMatch.created_at.desc())
-        )
-        if match:
-            missing_rows = await db.execute(
-                select(JobRequirement.skill)
-                .join(JobMatchItem, JobMatchItem.requirement_id == JobRequirement.id)
-                .where(JobMatchItem.match_id == match.id, JobMatchItem.matching_status == "missing")
-            )
-            missing = list(missing_rows.scalars())
+            resume_summary = version.structured_json or {}
+            resume_skills = list(resume_summary.get("technologies") or [])
+    job_context = await _job_context(db, user, payload.job_id, payload.resume_id)
+    missing = list(job_context.get("missing") or [])
     prior_gaps = [
         gap.skill
         for gap in await db.scalars(
             select(SkillGap).where(SkillGap.user_id == user.id, SkillGap.status != "reassessed")
         )
     ]
+    generated = list(job_context.get("prepared_questions") or [])
+    if not generated:
+        generated = await generate_resume_jd_questions(
+            resume_summary=resume_summary,
+            job_context=job_context,
+            mode=payload.mode,
+            difficulty=payload.difficulty,
+            budget=12,
+            target_role=payload.target_role,
+        )
     planned = plan_interview(
         mode=payload.mode,
         difficulty=payload.difficulty,
@@ -99,6 +152,9 @@ async def create_plan(db: AsyncSession, user: User, payload) -> InterviewPlan:
         resume_skills=resume_skills,
         missing_requirements=missing,
         prior_gaps=prior_gaps,
+        resume_summary=resume_summary,
+        job_context=job_context,
+        generated_questions=generated,
     )
     plan = InterviewPlan(
         user_id=user.id,
@@ -136,6 +192,8 @@ async def start_session(
         version = await db.scalar(select(ResumeVersion).where(ResumeVersion.id == plan.resume_version_id))
         if version:
             resume_summary = version.structured_json or {}
+    job_alignment = await _job_context(db, user, plan.job_id, None)
+    planned_questions = list(plan.planned_questions or [])
     state = InterviewGraphState(
         session_id="pending",
         user_id=str(user.id),
@@ -145,14 +203,17 @@ async def start_session(
         target_role=plan.target_role,
         seniority=plan.seniority,
         resume_summary=resume_summary,
-        prior_gaps=[item["topic"] for item in plan.planned_questions],
-        planned_question_keys=[item["question_key"] for item in plan.planned_questions],
-        uncovered_competencies=[item["topic"] for item in plan.planned_questions],
-        max_questions=max(3, len(plan.planned_questions)),
+        job_alignment=job_alignment,
+        prior_gaps=[item.get("topic") for item in planned_questions if item.get("topic")],
+        planned_question_keys=[item["question_key"] for item in planned_questions],
+        planned_questions=planned_questions,
+        uncovered_competencies=[item.get("topic") for item in planned_questions if item.get("topic")],
+        max_questions=max(3, len(planned_questions)),
         max_llm_calls=settings.session_max_llm_calls,
         max_tokens=settings.session_max_tokens,
         provider_available=settings.llm_configured,
         speech_assisted=speech_assisted,
+        max_follow_ups=0 if speech_assisted else 1,
     )
     state = graph_singleton.invoke(state)
     session = InterviewSession(
@@ -237,6 +298,7 @@ def current_question(session: InterviewSession) -> InterviewQuestion | None:
 
 def session_payload(session: InterviewSession) -> dict:
     question = current_question(session)
+    state = session.graph_state or {}
     return {
         "id": session.id,
         "status": session.status,
@@ -249,7 +311,16 @@ def session_payload(session: InterviewSession) -> dict:
         "uncovered_competencies": session.uncovered_competencies,
         "follow_up_count": session.follow_up_count,
         "provider_available": session.provider_available,
-        "speech_assisted": bool((session.graph_state or {}).get("speech_assisted", True)),
+        "speech_assisted": bool(state.get("speech_assisted", True)),
+        "speech_lexicon": build_speech_lexicon(
+            resume_summary=state.get("resume_summary") or {},
+            job_alignment=state.get("job_alignment") or {},
+            extra=[
+                question.prompt if question else "",
+                question.topic if question else "",
+                *(state.get("uncovered_competencies") or []),
+            ],
+        ),
         "current_question": _question_out(question),
     }
 
@@ -263,14 +334,24 @@ async def submit_answer(db: AsyncSession, user: User, session_id: UUID, payload)
         raise NotFoundError("Question not found in this session")
     if payload.request_help:
         question.help_revealed = True
+    exact = payload.raw_text
+    spoken = exact
+    if getattr(payload, "transcript_provenance", "typed") == "speech_to_text":
+        state = session.graph_state or {}
+        lexicon = build_speech_lexicon(
+            resume_summary=state.get("resume_summary") or {},
+            job_alignment=state.get("job_alignment") or {},
+            extra=[question.prompt, question.topic, *(state.get("uncovered_competencies") or [])],
+        )
+        spoken = correct_transcript(exact, lexicon)
     answer = InterviewAnswer(
         session_id=session.id,
         question_id=question.id,
-        raw_text=payload.raw_text,
+        raw_text=spoken,
         started_at=payload.started_at or question.started_at,
         ended_at=payload.ended_at or _utcnow(),
         duration_seconds=payload.duration_seconds,
-        transcript_text=payload.raw_text,
+        transcript_text=exact,
         transcript_provenance=(
             payload.transcript_provenance
             if getattr(payload, "transcript_provenance", "typed") in {"typed", "speech_to_text"}
@@ -340,17 +421,26 @@ async def submit_answer(db: AsyncSession, user: User, session_id: UUID, payload)
                     notes=feature.get("notes"),
                 )
             )
-    if state.last_evaluation and looks_unsure(payload.raw_text):
+    if state.last_evaluation and (looks_unsure(exact) or looks_closing(exact)):
         state.last_evaluation["skip_follow_up"] = True
     state = graph_singleton.follow_up_decision(state)
+    if looks_closing(exact):
+        state.current_question = None
+        state.status = "aggregating"
     if state.status == "follow_up" and state.current_question:
         parent_id = question.id
         await _persist_question(
             db, session, state.current_question, sequence=len(session.questions) + 1, parent_id=parent_id
         )
         session.follow_up_count = state.follow_up_count
-    elif state.current_question is None:
+    elif state.current_question is None and state.status != "aggregating":
         next_state = graph_singleton.question_generator(state)
+        while next_state.current_question and prompts_match(next_state.current_question.get("prompt"), question.prompt):
+            key = next_state.current_question.get("question_key")
+            if key and key not in next_state.asked_question_keys:
+                next_state.asked_question_keys.append(key)
+            next_state.current_question = None
+            next_state = graph_singleton.question_generator(next_state)
         if next_state.current_question:
             await _persist_question(db, session, next_state.current_question, sequence=len(session.questions) + 1)
             state = next_state
@@ -367,18 +457,28 @@ async def submit_answer(db: AsyncSession, user: User, session_id: UUID, payload)
     session = await get_session(db, user, session.id)
     evaluation_out = _evaluation_out(evaluation, question)
     next_q = current_question(session)
+    if looks_closing(exact) or (next_q and prompts_match(next_q.prompt, question.prompt)):
+        next_q = None
     first = (user.display_name or "").strip().split()[0] or "there"
     interviewer_turn = await spoken_bridge(
         candidate=first,
         question=question.prompt,
-        answer=payload.raw_text,
+        answer=spoken,
         score=float(evaluation.get("weighted_score") or 0),
         next_prompt=next_q.prompt if next_q else None,
+        resume_summary=(session.graph_state or {}).get("resume_summary") or {},
+        job_alignment=(session.graph_state or {}).get("job_alignment") or {},
+        target_role=(session.graph_state or {}).get("target_role") or "",
     )
+    payload = session_payload(session)
+    if looks_closing(exact):
+        payload["current_question"] = None
     return {
-        "session": session_payload(session),
+        "session": payload,
         "evaluation": evaluation_out,
         "interviewer_turn": interviewer_turn,
+        "transcript_exact": exact,
+        "transcript_clean": exact,
     }
 
 

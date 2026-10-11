@@ -61,6 +61,9 @@ class JobMatchItemOut(BaseModel):
     evidence_strength: str
     matching_status: str
     follow_up_questions: list[str]
+    lexical_score: float | None = None
+    similarity_score: float | None = None
+    match_method: str | None = None
 
 
 class JobMatchOut(BaseModel):
@@ -71,3 +74,4 @@ class JobMatchOut(BaseModel):
     partial_count: int
     missing_count: int
     items: list[JobMatchItemOut]
+    questions_prepared: bool = False

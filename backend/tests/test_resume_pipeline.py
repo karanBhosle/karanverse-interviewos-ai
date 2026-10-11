@@ -107,10 +107,45 @@ def test_job_requirement_mapping():
     ]
     result = match_requirements(requirements, evidence)
     assert 0 <= result["alignment_score"] <= 100
-    assert "not a probability" in result["score_explanation"].lower() or "not a probability" in result["score_explanation"]
+    assert "similarity" in result["score_explanation"].lower()
     statuses = {item["matching_status"] for item in result["items"]}
     assert "strong" in statuses
     assert "missing" in statuses
+
+
+def test_similarity_alignment_matches_rag_alias():
+    requirements = extract_requirements(
+        "Requirements:\n- Must have retrieval augmented generation experience\n- Large language models"
+    )
+    evidence = [
+        {
+            "skill_normalized": "python",
+            "evidence_text": "Built a RAG pipeline with BM25 and hybrid search over interview transcripts",
+            "source_section": "projects",
+            "source_page": 1,
+            "evidence_kind": "demonstrated",
+        }
+    ]
+    result = match_requirements(
+        requirements,
+        evidence,
+        resume_summary={
+            "technologies": ["python", "rag"],
+            "projects": [{"name": "Career coach RAG", "details": ["hybrid retrieval", "LLM evaluation"]}],
+        },
+        resume_text="Built a RAG pipeline with BM25 and hybrid search. Prompted LLMs for evaluation.",
+    )
+    by_skill = {item["skill"]: item for item in result["items"]}
+    rag = by_skill.get("retrieval augmented generation")
+    assert rag is not None
+    assert rag["matching_status"] in {"strong", "partial"}
+    assert rag["evidence_found"]
+    assert rag["match_method"] == "similarity_search"
+    assert rag["similarity_score"] is not None
+    assert result["alignment_score"] >= 20
+    llm = by_skill.get("large language models")
+    if llm:
+        assert llm["matching_status"] in {"strong", "partial"}
 
 
 def test_blank_pdf_is_not_executed_and_has_no_text():

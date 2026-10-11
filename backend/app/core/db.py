@@ -49,3 +49,14 @@ async def init_models() -> None:
 
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_job_match_questions)
+
+
+def _ensure_job_match_questions(sync_conn) -> None:
+    try:
+        rows = sync_conn.exec_driver_sql("PRAGMA table_info(job_matches)").fetchall()
+        columns = {row[1] for row in rows}
+        if rows and "prepared_questions" not in columns:
+            sync_conn.exec_driver_sql("ALTER TABLE job_matches ADD COLUMN prepared_questions JSON")
+    except Exception:
+        return

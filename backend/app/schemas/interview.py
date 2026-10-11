@@ -107,6 +107,7 @@ class SessionOut(ORMModel):
     follow_up_count: int
     provider_available: bool
     speech_assisted: bool = False
+    speech_lexicon: list[str] = Field(default_factory=list)
     current_question: QuestionOut | None = None
 
 

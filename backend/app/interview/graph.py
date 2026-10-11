@@ -17,6 +17,8 @@ from app.interview.planner import plan_interview
 from app.interview.state import InterviewGraphState
 from app.learning.planner import plan_from_gaps
 from app.retrieval.hybrid import HybridRetriever
+from app.interview.context import prompts_match
+from app.services.coach import looks_unsure
 from app.services.llm import CompatibleLLMProvider, LLMError, LLMProvider, parse_json_object
 
 
@@ -87,7 +89,10 @@ class InterviewGraph:
             resume_skills=list((state.resume_summary or {}).get("technologies") or []),
             missing_requirements=list((state.job_alignment or {}).get("missing") or []),
             prior_gaps=state.prior_gaps,
+            resume_summary=state.resume_summary,
+            job_context=state.job_alignment,
         )
+        state.planned_questions = plan["planned_questions"]
         state.planned_question_keys = [item["question_key"] for item in plan["planned_questions"]]
         state.uncovered_competencies = plan["uncovered_competencies"]
         state.max_questions = plan["max_questions"]
@@ -101,13 +106,29 @@ class InterviewGraph:
             state.status = "aggregating"
             state.current_question = None
             return state
-        question = next_unasked_question(state.mode, state.asked_question_keys, state.uncovered_competencies)
+        asked = set(state.asked_question_keys)
+        asked_prompts = [
+            item.get("prompt")
+            for item in state.planned_questions
+            if item.get("question_key") in asked
+        ]
+        question = next(
+            (
+                item
+                for item in state.planned_questions
+                if item.get("question_key") not in asked
+                and not any(prompts_match(item.get("prompt"), seen) for seen in asked_prompts)
+            ),
+            None,
+        )
+        if question is None:
+            question = next_unasked_question(state.mode, state.asked_question_keys, state.uncovered_competencies)
         if question is None:
             state.status = "aggregating"
             state.current_question = None
             return state
         state.current_question = {
-            k: question[k]
+            k: question.get(k)
             for k in (
                 "question_key",
                 "topic",
@@ -119,6 +140,7 @@ class InterviewGraph:
                 "reference_guidance",
                 "rubric_type",
             )
+            if question.get(k) is not None
         }
         state.status = "asking"
         return state
@@ -139,7 +161,7 @@ class InterviewGraph:
         evaluation = deterministic_evaluation(bank_question, answer)
         settings = get_settings()
         provider_available = getattr(self.provider, "available", False)
-        if provider_available and state.llm_calls_used < state.max_llm_calls:
+        if provider_available and state.llm_calls_used < state.max_llm_calls and not state.speech_assisted:
             try:
                 llm_eval = self._llm_evaluate(bank_question, answer, state)
                 evaluation = llm_eval
@@ -164,6 +186,8 @@ class InterviewGraph:
             "payload": ModelEvaluationPayload.model_validate(state.last_evaluation["payload"]),
             **{k: v for k, v in state.last_evaluation.items() if k != "payload"},
         }
+        if looks_unsure(state.current_answer or "") or reconstructed.get("skip_follow_up"):
+            reconstructed["skip_follow_up"] = True
         follow = decide_follow_up(
             state.current_question,
             reconstructed,

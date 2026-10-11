@@ -61,7 +61,8 @@ export default function ResumePage() {
         <div>
           <h1 className="text-2xl font-semibold">Resume workspace</h1>
           <p className="text-sm text-muted-foreground">
-            Extracted claims keep their source section. Keyword presence is not treated as demonstrated skill.
+            Alignment uses similarity search over your resume and the job description. Comparing also prepares
+            the live interview questions from this resume and JD. Those questions are not shown here.
           </p>
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
@@ -276,8 +277,18 @@ export default function ResumePage() {
                   ) : (
                     <p className="mt-1">No resume evidence found.</p>
                   )}
+                  {item.match_method ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Similarity {item.similarity_score ?? 0}
+                    </p>
+                  ) : null}
                 </div>
               ))}
+              {matchResult.questions_prepared ? (
+                <p className="pt-2 text-sm text-muted-foreground">
+                  Live interview questions are prepared from this comparison and will only be asked in the session.
+                </p>
+              ) : null}
             </CardContent>
           </Card>
         ) : null}

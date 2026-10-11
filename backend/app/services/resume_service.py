@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import get_settings
 from app.core.errors import NotFoundError, ValidationAppError
 from app.core.security import assert_owner
+from app.interview.question_gen import generate_resume_jd_questions
 from app.job_matching.extractor import extract_requirements
 from app.job_matching.matcher import match_requirements
 from app.models.job import JobDescription, JobMatch, JobMatchItem, JobRequirement
@@ -181,6 +182,32 @@ async def create_match(db: AsyncSession, user: User, resume_id: UUID, job_id: UU
             }
             for row in evidence
         ],
+        resume_summary=version.structured_json,
+        resume_text=version.extracted_text,
+    )
+    job_context = {
+        "title": job.title,
+        "company": job.company or "",
+        "requirements": [
+            {
+                "skill": item["skill"],
+                "description": item["description"],
+                "status": item["matching_status"],
+            }
+            for item in result["items"]
+        ],
+        "missing": [item["skill"] for item in result["items"] if item["matching_status"] == "missing"],
+        "strong": [item["skill"] for item in result["items"] if item["matching_status"] == "strong"],
+        "overlap": [item["skill"] for item in result["items"] if item["matching_status"] in {"strong", "partial"}],
+    }
+    prepared = await generate_resume_jd_questions(
+        resume_summary=version.structured_json,
+        job_context=job_context,
+        mode="mixed",
+        difficulty="easy",
+        budget=12,
+        target_role=job.title or "this role",
+        resume_text=version.extracted_text or "",
     )
     match = JobMatch(
         user_id=user.id,
@@ -191,6 +218,7 @@ async def create_match(db: AsyncSession, user: User, resume_id: UUID, job_id: UU
         strong_count=result["strong_count"],
         partial_count=result["partial_count"],
         missing_count=result["missing_count"],
+        prepared_questions=prepared,
     )
     db.add(match)
     await db.flush()

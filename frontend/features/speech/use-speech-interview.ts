@@ -3,42 +3,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  cleanHeard,
-  createAnswerMic,
-  isEcho,
+  growHeard,
+  isEmbeddedBrowser,
   isFinishedUtterance,
-  mergeUtterance,
-  transcribeClip,
-} from "@/features/speech/answer-mic";
-import { isIsolatedSpeech } from "@/features/speech/voice-isolation";
-import { loadWhisper } from "@/features/speech/live-mic";
-import { readSpeechResult, speechEngine, type SpeechRec } from "@/features/speech/browser-stt";
+  readElsaaResult,
+  requestMicPermission,
+  speechEngine,
+  speechSupported,
+  type SpeechRec,
+} from "@/features/speech/browser-stt";
 import {
-  interviewerIsSpeaking,
   muteSystemVoices,
   playInterviewerVoice,
   stopInterviewerVoice,
   subscribeInterviewerVoice,
 } from "@/features/speech/interviewer-voice";
 
-type AnswerMic = ReturnType<typeof createAnswerMic>;
-
-function isElectron() {
-  return typeof navigator !== "undefined" && /Electron/i.test(navigator.userAgent);
-}
-
 export function useSpeechInterview() {
   const recRef = useRef<SpeechRec | null>(null);
-  const micRef = useRef<AnswerMic | null>(null);
   const listeningRef = useRef(false);
-  const loopRef = useRef(false);
   const lastHeardRef = useRef(0);
+  const frozenRef = useRef("");
+  const sessionFinalRef = useRef("");
   const committedRef = useRef("");
   const liveRef = useRef("");
   const silenceFiredRef = useRef(false);
   const silenceTimerRef = useRef<number | null>(null);
   const onSilenceRef = useRef<(() => void) | null>(null);
-  const interviewerTextRef = useRef("");
   const [micReady, setMicReady] = useState(false);
   const [recording, setRecording] = useState(false);
   const [needsTap, setNeedsTap] = useState(true);
@@ -51,7 +42,7 @@ export function useSpeechInterview() {
   const [micLevel, setMicLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [voiceName] = useState("Neerja · Indian English");
-  const [supported] = useState({ tts: true, stt: true });
+  const [supported] = useState({ tts: true, stt: speechSupported() });
 
   const stopWebSpeech = useCallback(() => {
     const rec = recRef.current;
@@ -78,12 +69,15 @@ export function useSpeechInterview() {
     setTranscriptState((prev) => {
       const next = typeof value === "function" ? value(prev) : value;
       committedRef.current = next;
+      frozenRef.current = next;
       return next;
     });
   }, []);
 
   const resetAnswerAudio = useCallback(() => {
     lastHeardRef.current = 0;
+    frozenRef.current = "";
+    sessionFinalRef.current = "";
     committedRef.current = "";
     liveRef.current = "";
     silenceFiredRef.current = false;
@@ -93,16 +87,18 @@ export function useSpeechInterview() {
     setMicLevel(0);
   }, []);
 
-  const markHeard = useCallback((text: string, live = "") => {
-    if (text) {
-      committedRef.current = text;
-      setTranscriptState(text);
-    }
+  const paintHeard = useCallback((heard: string, live = "") => {
+    const next = heard.trim() || committedRef.current;
+    if (!next) return;
+    committedRef.current = next;
     liveRef.current = live;
-    setInterim(live);
+    frozenRef.current = next;
+    setTranscriptState(next);
+    setInterim("");
     lastHeardRef.current = Date.now();
     silenceFiredRef.current = false;
     setSilenceLeft(null);
+    setMicLevel(0.14);
     setListenStatus("Heard you. Keep talking, or pause when you are done.");
   }, []);
 
@@ -114,7 +110,6 @@ export function useSpeechInterview() {
 
   const stopListening = useCallback(() => {
     listeningRef.current = false;
-    loopRef.current = false;
     stopWebSpeech();
     setRecording(false);
     setMicLevel(0);
@@ -163,43 +158,57 @@ export function useSpeechInterview() {
 
   const startElsaaListen = useCallback(() => {
     const SR = speechEngine();
-    if (!SR || isElectron()) return false;
+    if (!SR) return false;
     stopWebSpeech();
+    sessionFinalRef.current = "";
+    liveRef.current = "";
     const rec = new SR();
     rec.lang = "en-IN";
     rec.interimResults = true;
-    rec.continuous = false;
+    rec.continuous = true;
+    rec.maxAlternatives = 1;
     rec.onstart = () => {
       setRecording(true);
       setListenStatus("Listening… speak now.");
     };
     rec.onresult = (event) => {
-      if (interviewerIsSpeaking()) return;
-      const result = readSpeechResult(event);
-      const live = result.interim;
-      const finals = cleanHeard(result.finals);
-      if (finals) {
-        if (isEcho(finals, interviewerTextRef.current)) return;
-        const next = mergeUtterance(committedRef.current, finals);
-        markHeard(next, "");
-        finishIfComplete(next);
-        return;
-      }
-      if (live && !isEcho(live, interviewerTextRef.current)) markHeard(committedRef.current, live);
+      const result = readElsaaResult(event);
+      sessionFinalRef.current = result.finals;
+      liveRef.current = result.interim;
+      const stable = result.finals
+        ? growHeard(frozenRef.current, result.finals)
+        : frozenRef.current;
+      if (result.finals) frozenRef.current = stable;
+      const next = growHeard(stable, result.interim);
+      paintHeard(next, result.interim);
+      finishIfComplete(next);
     };
     rec.onerror = (event) => {
       if (event.error === "not-allowed") {
         setError("Microphone permission is blocked. Allow the mic, then click Yes, start the interview.");
         setNeedsTap(true);
         setRecording(false);
+        listeningRef.current = false;
       }
     };
     rec.onend = () => {
+      if (recRef.current !== rec) return;
       recRef.current = null;
       if (!listeningRef.current || silenceFiredRef.current) return;
+      const sealed = growHeard(
+        frozenRef.current,
+        sessionFinalRef.current || liveRef.current || committedRef.current,
+      );
+      if (sealed) {
+        frozenRef.current = sealed;
+        committedRef.current = sealed;
+        setTranscriptState(sealed);
+        sessionFinalRef.current = "";
+        liveRef.current = "";
+      }
       window.setTimeout(() => {
         if (listeningRef.current && !silenceFiredRef.current) startElsaaListen();
-      }, 80);
+      }, 40);
     };
     recRef.current = rec;
     try {
@@ -209,33 +218,7 @@ export function useSpeechInterview() {
       recRef.current = null;
       return false;
     }
-  }, [finishIfComplete, markHeard, stopWebSpeech]);
-
-  const loopClips = useCallback(async () => {
-    if (loopRef.current || !micRef.current) return;
-    loopRef.current = true;
-    let next = micRef.current.recordClip(1600);
-    while (listeningRef.current && micRef.current) {
-      const clip = await next;
-      if (!listeningRef.current || !micRef.current) break;
-      next = micRef.current.recordClip(1600);
-      if (interviewerIsSpeaking()) continue;
-      if (clip.blob.size < 800 || !isIsolatedSpeech(clip.peak, clip.voice)) continue;
-      try {
-        setListenStatus("Transcribing your voice…");
-        const text = await transcribeClip(clip.blob);
-        if (!listeningRef.current || !text) continue;
-        if (isEcho(text, interviewerTextRef.current)) continue;
-        const next = mergeUtterance(committedRef.current, text);
-        markHeard(next);
-        finishIfComplete(next);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not transcribe the microphone audio.");
-        setListenStatus("Transcription failed. Keep speaking, or pause and I will continue.");
-      }
-    }
-    loopRef.current = false;
-  }, [finishIfComplete, markHeard]);
+  }, [finishIfComplete, paintHeard, stopWebSpeech]);
 
   const startSpeaking = useCallback(async () => {
     setError(null);
@@ -243,44 +226,29 @@ export function useSpeechInterview() {
     listeningRef.current = true;
     silenceFiredRef.current = false;
     watchSilence();
-    setListenStatus("Opening the isolated microphone…");
-    void loadWhisper();
+    setListenStatus("Listening… speak now.");
     try {
-      if (!micRef.current) {
-        micRef.current = createAnswerMic((rms) => {
-          setMicLevel(rms);
-        });
+      if (isEmbeddedBrowser() || !speechEngine()) {
+        throw new Error("Open this page in Google Chrome — the same browser where ELSAA transcripts work.");
       }
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
-      if (!listeningRef.current) return;
-      await micRef.current.start();
-      micRef.current.setGate(false);
       setMicReady(true);
       setRecording(true);
       setNeedsTap(false);
-      setListenStatus("Listening… speak now.");
-      startElsaaListen();
-      void loopClips();
+      if (!startElsaaListen()) {
+        throw new Error("Could not start Chrome speech recognition. Reload in Google Chrome and allow the microphone.");
+      }
     } catch (err) {
       listeningRef.current = false;
       setRecording(false);
       setNeedsTap(true);
-      setError(
-        err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")
-          ? "Allow the microphone, then click Yes, start the interview."
-          : err instanceof Error
-            ? err.message
-            : "Allow the microphone, then click Yes, start the interview.",
-      );
+      setError(err instanceof Error ? err.message : "Allow the microphone, then click Yes, start the interview.");
     }
-  }, [loopClips, startElsaaListen, watchSilence]);
+  }, [startElsaaListen, watchSilence]);
 
   const stopRecording = useCallback(() => {
     listeningRef.current = false;
     stopWebSpeech();
     clearSilenceWatch();
-    void micRef.current?.stop();
-    micRef.current = null;
     setMicReady(false);
     setRecording(false);
     setNeedsTap(true);
@@ -293,7 +261,6 @@ export function useSpeechInterview() {
     const unsubscribe = subscribeInterviewerVoice((state) => {
       setSpeaking(state.speaking);
       setVoiceLoading(state.loading);
-      micRef.current?.setGate(state.speaking || state.loading);
     });
     return () => {
       unsubscribe();
@@ -305,8 +272,6 @@ export function useSpeechInterview() {
   const speak = useCallback(
     async (text: string) => {
       listeningRef.current = false;
-      interviewerTextRef.current = text;
-      micRef.current?.setGate(true);
       stopListening();
       setError(null);
       try {
@@ -321,15 +286,11 @@ export function useSpeechInterview() {
   const armMicrophone = useCallback(async () => {
     setError(null);
     muteSystemVoices();
+    if (isEmbeddedBrowser() || !speechEngine()) {
+      throw new Error("Open this page in Google Chrome — the same browser where ELSAA transcripts work.");
+    }
     setListenStatus("Requesting the microphone…");
-    if (!micRef.current) {
-        micRef.current = createAnswerMic((rms) => {
-          setMicLevel(rms);
-        });
-      }
-    await micRef.current.start();
-    micRef.current.setGate(true);
-    void loadWhisper();
+    await requestMicPermission();
     setMicReady(true);
     setListenStatus("Microphone is ready.");
   }, []);

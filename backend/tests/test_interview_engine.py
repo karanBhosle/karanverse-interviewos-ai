@@ -72,6 +72,31 @@ def test_model_payload_must_match_rubric():
         apply_model_payload(question, payload, model_name="mock")
 
 
+def test_graph_moves_on_when_user_does_not_know():
+    question = get_question("py_mutability")
+    evaluation = deterministic_evaluation(question, "I don't know")
+    graph = InterviewGraph()
+    state = InterviewGraphState(
+        session_id="s1",
+        user_id="u1",
+        mode="python_coding",
+        difficulty="easy",
+        duration_minutes=20,
+        current_question=question,
+        current_answer="I don't know",
+        last_evaluation={
+            "payload": evaluation["payload"].model_dump(),
+            **{key: value for key, value in evaluation.items() if key != "payload"},
+        },
+        max_follow_ups=0,
+        asked_question_keys=["py_mutability"],
+        max_questions=4,
+    )
+    state = graph.follow_up_decision(state)
+    assert state.status != "follow_up"
+    assert state.current_question is None
+
+
 def test_graph_state_transitions_and_coverage():
     question = get_question("py_mutability")
     graph = InterviewGraph()

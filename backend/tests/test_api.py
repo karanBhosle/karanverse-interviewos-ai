@@ -102,6 +102,8 @@ async def test_session_persistence_and_failed_llm(auth_client):
     )
     assert match.status_code == 200
     assert "not a probability" in match.json()["score_explanation"].lower() or "not a probability of being hired" in match.json()["score_explanation"]
+    assert match.json()["questions_prepared"] is True
+    assert "prepared_questions" not in match.json()
     plan = await auth_client.post(
         "/api/v1/interview-plans",
         json={
@@ -118,8 +120,11 @@ async def test_session_persistence_and_failed_llm(auth_client):
     )
     assert session.status_code == 200
     assert session.json()["speech_assisted"] is True
+    lexicon = " ".join(session.json()["speech_lexicon"]).lower()
+    assert "rag" in lexicon or "langgraph" in lexicon
     question = session.json()["current_question"]
     assert question is not None
+    assert question["question_key"].startswith("mix_") or "python" in question["prompt"].lower()
     answered = await auth_client.post(
         f"/api/v1/interview-sessions/{session.json()['id']}/answers",
         json={

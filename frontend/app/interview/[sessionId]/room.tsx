@@ -23,7 +23,7 @@ function firstName(value?: string | null) {
   return name || "there";
 }
 
-type ChatLine = { id: string; role: "interviewer" | "you"; text: string };
+type ChatLine = { id: string; role: "interviewer" | "you"; text: string; heard?: string };
 
 function lineId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -54,7 +54,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
   const speech = useSpeechInterview();
   const question = current?.current_question;
   const candidate = firstName(me.data?.display_name);
-  const greeting = `Hi ${candidate}, hope you are doing well. Thank you for joining today. Shall we start the interview?`;
+  const greeting = `Hi ${candidate}, hope you are doing well. Today we will talk through your resume against the role — it is a conversation, so if you get stuck we will just move on. Shall we start?`;
   answerRef.current = answer;
 
   useEffect(() => {
@@ -69,14 +69,14 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     if (!speechAssisted) return;
-    const live = [speech.transcript, speech.interim].filter(Boolean).join(" ").trim();
-    if (live) setAnswer(live);
+    const exact = speech.transcript.trim();
+    if (!exact) return;
+    setAnswer(exact);
     setLines((prev) => {
       const rest = prev.filter((line) => line.id !== "live");
-      if (!live) return rest;
-      return [...rest, { id: "live", role: "you", text: live }];
+      return [...rest, { id: "live", role: "you", text: exact }];
     });
-  }, [speech.transcript, speech.interim, speechAssisted]);
+  }, [speech.transcript, speechAssisted]);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
@@ -84,28 +84,36 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
 
   const submitAnswer = useCallback(async () => {
     if (!current || !question || submittingRef.current) return;
-    const text = answerRef.current.trim();
-    if (!text) return;
+    const exact = answerRef.current.trim();
+    if (!exact) return;
     submittingRef.current = true;
     speech.pauseAnswerTurn();
     speech.stopSpeaking();
     setThinking(true);
+    const youId = lineId();
     setLines((prev) => [
       ...prev.filter((line) => line.id !== "live"),
-      { id: lineId(), role: "you", text },
+      { id: youId, role: "you", text: exact, heard: exact },
     ]);
     try {
       const result = await api.post<{
         session: Session;
         evaluation: Evaluation;
         interviewer_turn?: InterviewerTurn;
+        transcript_exact?: string;
+        transcript_clean?: string;
       }>(`/api/v1/interview-sessions/${current.id}/answers`, {
         question_id: question.id,
-        raw_text: text,
+        raw_text: exact,
         duration_seconds: elapsed,
         transcript_provenance: usedSpeechRef.current ? "speech_to_text" : "typed",
         visual_features: current.visual_consent && webcam.active ? webcam.sampleLocalFeatures() : undefined,
       });
+      setLines((prev) =>
+        prev.map((line) =>
+          line.id === youId ? { ...line, text: exact, heard: result.transcript_exact || exact } : line,
+        ),
+      );
       setSession(result.session);
       setEvaluation(result.evaluation);
       setAnswer("");
@@ -114,15 +122,18 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
       setError(null);
       const next = result.session.current_question;
       const spoken = (result.interviewer_turn?.spoken || result.evaluation.feedback || "").trim();
+      const wrapping = !next || /wrap the interview/i.test(spoken);
       setThinking(false);
       if (spoken) setLines((prev) => [...prev, { id: lineId(), role: "interviewer", text: spoken }]);
       if (speechAssisted) {
         setPhase("asking");
-        if (next) askedQuestionIdRef.current = next.id;
+        if (next && !wrapping) askedQuestionIdRef.current = next.id;
         if (spoken) await speech.speak(spoken);
-        if (next) {
+        if (next && !wrapping) {
           setPhase("listening");
           await speech.startSpeaking();
+        } else {
+          speech.pauseAnswerTurn();
         }
       }
     } catch (err) {
@@ -152,7 +163,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
       return [...prev, { id: lineId(), role: "interviewer", text: question.prompt }];
     });
     await speech.speak(question.prompt);
-    await new Promise((resolve) => window.setTimeout(resolve, 280));
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
     speech.resetAnswerAudio();
     setPhase("listening");
     await speech.startSpeaking();
@@ -205,14 +216,16 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
               />
               <p className="text-lg leading-relaxed">{greeting}</p>
               <p className="text-sm text-muted-foreground">
-                This is a live conversation, not a form. I react to what you say, then we keep talking. Pause for 5
-                seconds when you finish a thought.
+                This is a two-way conversation about your resume and the job. I react to what you say, then we keep
+                talking. The live line is exactly what Chrome heard. Questions were prepared when you compared
+                the resume and job and are only asked here. If you cannot answer, say so and we move on. Pause
+                for 5 seconds when you finish a thought.
               </p>
               <label className="flex items-start gap-3 text-sm">
                 <Checkbox checked={consent} onCheckedChange={(value) => setConsent(Boolean(value))} />
                 <span>
-                  I consent to microphone use for this session. Answers are transcribed on this device for free.
-                  Scoring uses the transcript.
+                  I consent to microphone use for this session. Open this page in Google Chrome — the same
+                  speech engine as ELSAA. Scoring uses the spoken transcript.
                 </span>
               </label>
               {error || speech.error ? (
@@ -317,7 +330,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
                       }
                       status={
                         thinking
-                          ? "Thinking about your answer…"
+                          ? "Saving your answer…"
                           : speech.silenceLeft !== null
                             ? `Got it. Continuing in ${speech.silenceLeft}s.`
                             : speech.listenStatus
@@ -340,9 +353,12 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
                             }
                           >
                             <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                              {line.role === "you" ? "You" : "Neerja"}
+                              {line.role === "you" ? (line.id === "live" ? "You · exact" : "You") : "Neerja"}
                             </p>
                             <p>{line.text}</p>
+                            {line.heard && line.heard !== line.text ? (
+                              <p className="mt-2 text-[11px] text-muted-foreground">Heard: {line.heard}</p>
+                            ) : null}
                           </div>
                         </div>
                       ))}

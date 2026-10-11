@@ -57,7 +57,11 @@ export type JobMatch = {
     evidence_strength: string;
     matching_status: string;
     follow_up_questions: string[];
+    lexical_score?: number | null;
+    similarity_score?: number | null;
+    match_method?: string | null;
   }>;
+  questions_prepared?: boolean;
 };
 
 export type Question = {
@@ -87,6 +91,7 @@ export type Session = {
   follow_up_count: number;
   provider_available: boolean;
   speech_assisted: boolean;
+  speech_lexicon?: string[];
   current_question: Question | null;
 };
 

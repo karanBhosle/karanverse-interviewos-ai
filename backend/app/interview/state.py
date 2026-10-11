@@ -17,6 +17,7 @@ class InterviewGraphState(BaseModel):
     job_alignment: dict[str, Any] = Field(default_factory=dict)
     prior_gaps: list[str] = Field(default_factory=list)
     planned_question_keys: list[str] = Field(default_factory=list)
+    planned_questions: list[dict[str, Any]] = Field(default_factory=list)
     asked_question_keys: list[str] = Field(default_factory=list)
     covered_competencies: list[str] = Field(default_factory=list)
     uncovered_competencies: list[str] = Field(default_factory=list)

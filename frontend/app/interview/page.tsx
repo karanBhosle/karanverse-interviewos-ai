@@ -32,7 +32,7 @@ export default function InterviewSetupPage() {
   const jobs = useJobs();
   const router = useRouter();
   const [mode, setMode] = useState("mixed");
-  const [difficulty, setDifficulty] = useState("medium");
+  const [difficulty, setDifficulty] = useState("easy");
   const [duration, setDuration] = useState(30);
   const [role, setRole] = useState("Data Scientist");
   const [resumeId, setResumeId] = useState<string>();
@@ -51,6 +51,7 @@ export default function InterviewSetupPage() {
           <h1 className="text-2xl font-semibold">Interview setup</h1>
           <p className="text-sm text-muted-foreground">
             Choose a mode, duration, and whether this session is a virtual interview or text-only.
+            Select the same resume and job you compared. Questions are generated then and only asked live.
           </p>
         </div>
         <Card>
@@ -84,9 +85,8 @@ export default function InterviewSetupPage() {
                   value={difficulty}
                   onChange={(event) => setDifficulty(event.target.value)}
                 >
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
+                  <option value="easy">Easy — start from basics</option>
+                  <option value="medium">Medium — intermediate</option>
                 </select>
               </label>
             </div>
@@ -101,7 +101,7 @@ export default function InterviewSetupPage() {
               />
             </label>
             <label className="space-y-2 text-sm">
-              Resume
+              Resume — questions will use your projects and skills
               <select
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
                 value={resumeId ?? ""}
@@ -116,7 +116,7 @@ export default function InterviewSetupPage() {
               </select>
             </label>
             <label className="space-y-2 text-sm">
-              Job description
+              Job description — mixed with the resume
               <select
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
                 value={jobId ?? ""}

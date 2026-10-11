@@ -1,5 +1,7 @@
 # karanVerse InterviewOS AI
 
+**Version 1.0.0**
+
 Personal interview and career intelligence coach. Upload a resume, compare it to a job description, sit a mock interview, and get an explainable report with skill gaps and a learning roadmap.
 
 This is a coaching product, not a chatbot wrapper and not a hiring predictor. Scores are practice signals. They are not a probability of being hired.

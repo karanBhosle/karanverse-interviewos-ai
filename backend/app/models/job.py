@@ -50,6 +50,7 @@ class JobMatch(UUIDPrimaryKey, TimestampMixin, Base):
     strong_count: Mapped[int] = mapped_column(Integer, default=0)
     partial_count: Mapped[int] = mapped_column(Integer, default=0)
     missing_count: Mapped[int] = mapped_column(Integer, default=0)
+    prepared_questions: Mapped[list] = mapped_column(JSONType, default=list)
 
     job = relationship("JobDescription", back_populates="matches")
     items = relationship("JobMatchItem", back_populates="match", cascade="all, delete-orphan")

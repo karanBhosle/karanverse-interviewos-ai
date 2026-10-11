@@ -77,4 +77,5 @@ async def create_match(payload: JobMatchRequest, user: CurrentUser, db: AsyncSes
         partial_count=match.partial_count,
         missing_count=match.missing_count,
         items=items,
+        questions_prepared=bool(match.prepared_questions),
     )

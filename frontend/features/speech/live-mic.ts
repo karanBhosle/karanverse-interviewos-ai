@@ -37,12 +37,18 @@ export async function loadWhisper(): Promise<Transcriber> {
   if (!transcriberPromise) {
     transcriberPromise = import("@huggingface/transformers").then(async ({ pipeline, env }) => {
       env.allowLocalModels = false;
-      const pipe = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en", {
+      const pipe = await pipeline("automatic-speech-recognition", "Xenova/whisper-base.en", {
         dtype: "q8",
       });
-      return async (audio: Float32Array) =>
+      return async (audio: Float32Array, options?: Record<string, unknown>) =>
         pipe(audio, {
           sampling_rate: 16_000,
+          language: "english",
+          task: "transcribe",
+          return_timestamps: false,
+          temperature: 0,
+          condition_on_previous_text: false,
+          ...options,
         }) as Promise<{ text?: string }>;
     });
   }
