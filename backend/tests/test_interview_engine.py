@@ -26,6 +26,14 @@ def test_follow_up_limits():
     follow = decide_follow_up(question, evaluation, follow_up_count=0, max_follow_ups=2, asked_keys=[])
     assert follow is not None
     assert follow["question_key"] not in {"py_mutability"}
+    skipped = decide_follow_up(
+        question,
+        {**evaluation, "skip_follow_up": True},
+        follow_up_count=0,
+        max_follow_ups=2,
+        asked_keys=[],
+    )
+    assert skipped is None
 
 
 def test_weighted_score_is_python_computed():

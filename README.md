@@ -12,11 +12,11 @@ KaranVerse InterviewOS AI helps a candidate prepare for data science and ML inte
 
 - See what the resume actually documents, and what is only a keyword.
 - See what a target job asks for, and where the resume is strong, partial, or missing.
-- Practice in a structured interview room instead of an open-ended chat.
+- Practice in a virtual interview or a structured text room instead of an open-ended chat.
 - Read a report that separates answers, deterministic scores, and optional LLM commentary.
 - Turn gaps into a learning plan with verified links or search suggestions, never invented citations.
 
-Typical local loop: resume workspace → interview setup → interview room → evaluation report → skill gaps → learning roadmap.
+Typical local loop: resume workspace → interview setup → virtual interview or text room → evaluation report → skill gaps → learning roadmap.
 
 ## How GenAI is implemented
 
@@ -36,7 +36,7 @@ flowchart TB
 
 **Orchestration.** A LangGraph state machine plans the session, asks one question at a time, retrieves evidence, evaluates the answer, decides a bounded follow-up, then builds gaps, a learning plan, and a report.
 
-**Where the model is used.** If `LLM_API_KEY` and `LLM_BASE_URL` are set, the backend can call any OpenAI-compatible `/chat/completions` API (OpenAI, Azure, Groq, OpenRouter, Ollama, vLLM). The model returns structured JSON interpretations. It does not compute the final weighted score.
+**Where the model is used.** If `LLM_API_KEY` and `LLM_BASE_URL` are set, the backend can call any OpenAI-compatible `/chat/completions` API (OpenAI, Azure, Groq, OpenRouter, Ollama, vLLM). The model returns structured JSON interpretations. It does not compute the final weighted score. On OpenRouter the client stays on free models only (`:free` or `openrouter/free`). `LLM_MODEL=random` picks one model from `LLM_MODELS` per call. In a virtual interview the same LLM writes the next spoken turn: it reacts to the last answer, then asks the next question in its own words. Speech-to-text is not billed to the LLM provider.
 
 **Where the model is not trusted.** Python owns rubric weights, follow-up limits, alignment math, and report validation. Resume facts, job-requirement inferences, candidate answers, deterministic measurements, and LLM interpretations stay labeled separately.
 
@@ -66,13 +66,25 @@ Upload PDF/DOCX or paste text. Extracted skills keep a source section and an evi
 
 ### Interview setup
 
-Pick role, mode (including GenAI and LLMs), difficulty, duration, optional resume and job context, spoken answers, and optional webcam. A face-to-face session reads the question aloud, records the candidate, and transcribes speech to text for scoring. Audio stays in the browser. Webcam frames stay local unless the candidate consents to server-side visual analysis. Camera or microphone denial still allows a typed interview.
+Pick role, mode (including GenAI and LLMs), difficulty, duration, optional resume and job context, spoken answers, and optional webcam. A **virtual interview** is the spoken live session: the interviewer reads aloud, you answer out loud, and the camera can stay on for presence. Speech is transcribed on this device for free. Audio stays in the browser. Webcam frames stay local unless the candidate consents to server-side visual analysis. Camera or microphone denial still allows a typed interview. The session does not start until microphone consent is given.
 
 ![Interview setup](docs/screenshots/03-interview-setup.png)
 
-### Interview room
+### Virtual interview
 
-One question at a time, with topic, learning objective, and a timer. In spoken mode the interviewer voice reads the prompt, the candidate answers out loud, and the transcript is what gets scored. Help and reference answers stay hidden until requested. The badge shows whether an LLM provider is available or the session is on deterministic evaluation only.
+A virtual interview is a live conversation, not a form. There is no Start speaking or I am done button. After you consent, Neerja (neural Indian English) greets you, asks the first question, then listens. A 5-second silence after you finish a thought submits the transcript. Short exits such as "I don't know" or "can we skip" still advance: the coach acknowledges what you said and moves to the next question.
+
+![Live virtual interview](docs/screenshots/10-virtual-interview.png)
+
+The screenshot above is a live mixed / medium session:
+
+- **4D voice orb.** Silver while idle or waiting. Green only while the interviewer is talking. Red only while you are talking. Thinking, loading, or listening without speech stays silver.
+- **Conversation thread.** Neerja on the left (green-tinted). You on the right (rose). The coach reacts to the last answer, then asks the next question in spoken words. Here the candidate asked to skip; Neerja accepted that and circled back to mutable vs immutable data structures.
+- **On-device transcription.** Chrome `voiceIsolation` plus echo / noise suppression opens the mic. Clips are transcribed locally (Whisper-tiny.en). Scoring uses the transcript, not the raw audio. Paid cloud speech-to-text is not used.
+- **Optional camera.** Off until you start it. Denying the camera does not stop the spoken interview.
+- **Provider badge.** `LLM provider available` means spoken bridges and evaluations can use the configured free OpenRouter pool. Without a key the session still runs on the question bank.
+
+Text-only rooms still exist: one question at a time, topic, learning objective, and a timer. Help and reference answers stay hidden until requested.
 
 ![Interview room](docs/screenshots/04-interview-room.png)
 
@@ -113,7 +125,9 @@ Retention, camera consent, optional media storage, and account data deletion. Ra
 | Frontend | Next.js App Router, TypeScript, Tailwind, shadcn/ui, TanStack Query |
 | Backend | FastAPI, Pydantic v2, SQLAlchemy 2, Alembic |
 | Interview engine | LangGraph, curated question bank, Python rubric scoring |
-| Optional generation | Generic OpenAI-compatible Chat Completions client |
+| Optional generation | Generic OpenAI-compatible Chat Completions client; OpenRouter free-only pool with random pick |
+| Spoken coach | LLM spoken bridge after each answer; skip / "I don't know" advances without a follow-up |
+| Speech | On-device Whisper STT, Chrome voice isolation, Neerja neural TTS; 4D voice orb |
 | Retrieval | Hybrid BM25 + hashing embeddings |
 | Vision | Optional OpenCV face-box geometry and recording-quality flags |
 | Local data | SQLite by default; PostgreSQL + Redis + Celery in Docker Compose |
@@ -148,10 +162,13 @@ Open [http://localhost:3000](http://localhost:3000). Local mode skips sign-in (`
 Optional generation:
 
 ```bash
-# backend .env
-LLM_API_KEY=...
-LLM_MODEL=gpt-4o-mini
-LLM_BASE_URL=https://api.openai.com/v1
+# backend .env — OpenRouter free models only. Speech-to-text stays on-device.
+LLM_API_KEY=sk-or-v1-...
+LLM_MODEL=random
+LLM_MODELS=openrouter/free,google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3.5-lightning:free
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_STT_MODEL=
+TTS_VOICE=en-IN-NeerjaNeural
 ```
 
 Docker Compose starts Next.js, FastAPI, PostgreSQL, Redis, and Celery:
@@ -174,6 +191,8 @@ cd ../frontend && node --test tests/visual.test.ts
 - A skill name on a resume is keyword presence until a project or metric demonstrates it.
 - Visual metrics are geometric and quality flags only. They are not attention, emotion, or deception measures.
 - Learning links are either verified URLs or search suggestions. The product does not invent papers or courses.
+- Virtual interview speech-to-text is on-device and English-first. Chrome or Safari is required for the live mic path.
+- OpenRouter audio transcription is not used. There is no free cloud STT on that API, and paid audio credits are not required.
 
 ## License
 

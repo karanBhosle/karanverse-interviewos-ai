@@ -4,6 +4,20 @@ from typing import Literal
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+FREE_OPENROUTER_MODELS = (
+    "openrouter/free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "thinkingmachines/inkling:free",
+    "liquid/lfm-2.5-2.6b:free",
+    "poolside/laguna-xs-2.1:free",
+)
+
+
+def is_free_llm_model(name: str) -> bool:
+    model = name.strip().lower()
+    return model.endswith(":free") or model in {"openrouter/free", "random", "auto"}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -33,6 +47,10 @@ class Settings(BaseSettings):
         default="gpt-4o-mini",
         validation_alias=AliasChoices("LLM_MODEL", "OPENROUTER_MODEL"),
     )
+    llm_models: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_MODELS", "OPENROUTER_MODELS"),
+    )
     llm_base_url: str = Field(
         default="https://api.openai.com/v1",
         validation_alias=AliasChoices("LLM_BASE_URL", "OPENROUTER_BASE_URL"),
@@ -56,6 +74,10 @@ class Settings(BaseSettings):
     llm_app_name: str = Field(
         default="InterviewOS AI",
         validation_alias=AliasChoices("LLM_APP_NAME", "OPENROUTER_APP_NAME"),
+    )
+    llm_stt_model: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_STT_MODEL", "OPENROUTER_STT_MODEL"),
     )
     session_max_llm_calls: int = 20
     session_max_tokens: int = 80_000
@@ -87,6 +109,16 @@ class Settings(BaseSettings):
             raise ValueError("AUTHENTICATION_SECRET must be set")
         return value
 
+    @field_validator("llm_api_key")
+    @classmethod
+    def clean_llm_api_key(cls, value: str) -> str:
+        raw = value.strip().strip('"').strip("'")
+        for prefix in ("sk-or-", "sk-"):
+            index = raw.find(prefix)
+            if index >= 0:
+                return raw[index:].split()[0]
+        return raw.split()[0] if raw else ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         origins = [item.strip() for item in self.cors_origins.split(",") if item.strip()]
@@ -108,8 +140,30 @@ class Settings(BaseSettings):
         return self.upload_limit_mb * 1024 * 1024
 
     @property
+    def uses_openrouter(self) -> bool:
+        return "openrouter.ai" in self.llm_base_url.lower()
+
+    @property
+    def llm_model_pool(self) -> list[str]:
+        listed = [item.strip() for item in self.llm_models.split(",") if item.strip()]
+        chosen = self.llm_model.strip()
+        if self.uses_openrouter:
+            free = [item for item in listed if is_free_llm_model(item)]
+            if chosen and is_free_llm_model(chosen) and chosen.lower() not in {"random", "auto"}:
+                if chosen not in free:
+                    free.insert(0, chosen)
+            if free:
+                return free
+            return list(FREE_OPENROUTER_MODELS)
+        if listed:
+            return listed
+        if chosen.lower() in {"random", "auto"}:
+            return list(FREE_OPENROUTER_MODELS)
+        return [chosen] if chosen else []
+
+    @property
     def llm_configured(self) -> bool:
-        return bool(self.llm_api_key.strip() and self.llm_base_url.strip() and self.llm_model.strip())
+        return bool(self.llm_api_key.strip() and self.llm_base_url.strip() and self.llm_model_pool)
 
 
 @lru_cache

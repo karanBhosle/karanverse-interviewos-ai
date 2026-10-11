@@ -1,3 +1,5 @@
+import { openIsolatedMic } from "@/features/speech/voice-isolation";
+
 /** Same listen engine as ELSAA on the portfolio: browser SpeechRecognition, no held mic stream. */
 
 export type SpeechRec = {
@@ -41,14 +43,7 @@ export async function requestMicPermission() {
     throw new Error("This browser cannot open the microphone.");
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
+    const stream = await openIsolatedMic();
     stream.getTracks().forEach((track) => track.stop());
   } catch (error) {
     const name = error instanceof DOMException ? error.name : "";

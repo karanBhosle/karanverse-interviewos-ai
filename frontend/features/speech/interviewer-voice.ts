@@ -45,6 +45,10 @@ export function unmuteSystemVoices() {
   }
 }
 
+export function interviewerIsSpeaking() {
+  return player.speaking || player.loading;
+}
+
 export function subscribeInterviewerVoice(listener: VoiceListener) {
   listeners.add(listener);
   listener({ speaking: player.speaking, loading: player.loading });

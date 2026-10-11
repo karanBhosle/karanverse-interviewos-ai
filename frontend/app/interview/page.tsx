@@ -50,7 +50,7 @@ export default function InterviewSetupPage() {
         <div>
           <h1 className="text-2xl font-semibold">Interview setup</h1>
           <p className="text-sm text-muted-foreground">
-            Choose a mode, duration, and whether this session is spoken face-to-face or text-only.
+            Choose a mode, duration, and whether this session is a virtual interview or text-only.
           </p>
         </div>
         <Card>
@@ -143,8 +143,8 @@ export default function InterviewSetupPage() {
                 }}
               />
               <span>
-                Face-to-face spoken interview. The interviewer reads each question aloud, you answer out loud, and
-                the camera stays on for presence. Audio is transcribed in the browser and is not uploaded.
+                Virtual interview. The interviewer reads each question aloud, you answer out loud, and
+                the camera stays on for presence. Speech is transcribed on this device for free.
               </span>
             </label>
             <label className="flex items-start gap-3 text-sm">
@@ -165,8 +165,8 @@ export default function InterviewSetupPage() {
               <label className="flex items-start gap-3 text-sm">
                 <Checkbox checked={speechConsent} onCheckedChange={(value) => setSpeechConsent(Boolean(value))} />
                 <span>
-                  I consent to microphone use. My spoken answers will be transcribed in the browser. Audio is not
-                  uploaded unless I later change privacy settings.
+                  I consent to microphone use. Answers are transcribed on this device for free. Scoring uses the
+                  transcript, not the audio file.
                 </span>
               </label>
             ) : null}

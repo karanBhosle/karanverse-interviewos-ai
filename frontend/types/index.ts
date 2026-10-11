@@ -90,6 +90,11 @@ export type Session = {
   current_question: Question | null;
 };
 
+export type InterviewerTurn = {
+  spoken: string;
+  tone: string;
+};
+
 export type Evaluation = {
   weighted_score: number;
   provenance: string;

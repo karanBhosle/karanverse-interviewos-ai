@@ -24,7 +24,7 @@ class InterviewGraphState(BaseModel):
     current_answer: str | None = None
     last_evaluation: dict[str, Any] | None = None
     follow_up_count: int = 0
-    max_follow_ups: int = 2
+    max_follow_ups: int = 3
     max_questions: int = 6
     llm_calls_used: int = 0
     tokens_used: int = 0

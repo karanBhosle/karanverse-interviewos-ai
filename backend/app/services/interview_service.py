@@ -29,6 +29,7 @@ from app.models.resume import ResumeVersion
 from app.models.user import User
 from app.models.vision import VisualFeatureSummary
 from app.repositories.audit import write_audit
+from app.services.coach import looks_unsure, spoken_bridge
 from app.services.resume_service import get_job, get_resume
 from app.vision.pipeline import presentation_checklist
 
@@ -339,6 +340,8 @@ async def submit_answer(db: AsyncSession, user: User, session_id: UUID, payload)
                     notes=feature.get("notes"),
                 )
             )
+    if state.last_evaluation and looks_unsure(payload.raw_text):
+        state.last_evaluation["skip_follow_up"] = True
     state = graph_singleton.follow_up_decision(state)
     if state.status == "follow_up" and state.current_question:
         parent_id = question.id
@@ -363,7 +366,20 @@ async def submit_answer(db: AsyncSession, user: User, session_id: UUID, payload)
     await db.commit()
     session = await get_session(db, user, session.id)
     evaluation_out = _evaluation_out(evaluation, question)
-    return {"session": session_payload(session), "evaluation": evaluation_out}
+    next_q = current_question(session)
+    first = (user.display_name or "").strip().split()[0] or "there"
+    interviewer_turn = await spoken_bridge(
+        candidate=first,
+        question=question.prompt,
+        answer=payload.raw_text,
+        score=float(evaluation.get("weighted_score") or 0),
+        next_prompt=next_q.prompt if next_q else None,
+    )
+    return {
+        "session": session_payload(session),
+        "evaluation": evaluation_out,
+        "interviewer_turn": interviewer_turn,
+    }
 
 
 def _evaluation_out(evaluation: dict, question: InterviewQuestion) -> dict:

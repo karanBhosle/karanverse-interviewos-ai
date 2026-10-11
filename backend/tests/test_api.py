@@ -133,6 +133,19 @@ async def test_session_persistence_and_failed_llm(auth_client):
     )
     assert answered.status_code == 200
     assert answered.json()["evaluation"]["provenance"] == "deterministic_concept_coverage"
+    assert answered.json()["interviewer_turn"]["spoken"]
+    skipped = await auth_client.post(
+        f"/api/v1/interview-sessions/{session.json()['id']}/answers",
+        json={
+            "question_id": answered.json()["session"]["current_question"]["id"],
+            "raw_text": "I don't know",
+            "transcript_provenance": "speech_to_text",
+        },
+    )
+    assert skipped.status_code == 200
+    assert "next question" in skipped.json()["interviewer_turn"]["spoken"].lower() or skipped.json()[
+        "session"
+    ]["current_question"]
     completed = await auth_client.post(f"/api/v1/interview-sessions/{session.json()['id']}/complete")
     assert completed.status_code == 200
     report = await auth_client.get(f"/api/v1/interview-sessions/{session.json()['id']}/report")
@@ -183,3 +196,18 @@ async def test_tts_returns_neural_audio(auth_client, monkeypatch):
     assert spoken.headers["content-type"].startswith("audio/")
     assert spoken.headers["x-interviewos-voice"] == "en-IN-NeerjaNeural"
     assert spoken.content.startswith(b"ID3")
+
+
+@pytest.mark.asyncio
+async def test_stt_transcribes_upload(auth_client, monkeypatch):
+    async def fake_transcribe(data, filename=None, content_type=None):
+        assert data == b"fakeaudio"
+        assert filename == "speech.webm"
+        return "I used Python pandas for the analysis"
+
+    monkeypatch.setattr("app.api.v1.stt.transcribe_audio", fake_transcribe)
+    empty = await auth_client.post("/api/v1/stt", files={"file": ("speech.webm", b"", "audio/webm")})
+    assert empty.status_code == 422
+    spoken = await auth_client.post("/api/v1/stt", files={"file": ("speech.webm", b"fakeaudio", "audio/webm")})
+    assert spoken.status_code == 200
+    assert spoken.json()["text"] == "I used Python pandas for the analysis"

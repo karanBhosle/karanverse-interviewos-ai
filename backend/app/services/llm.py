@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,11 +64,19 @@ class CompatibleLLMProvider(LLMProvider):
     def available(self) -> bool:
         return self.settings.llm_configured
 
+    def pick_model(self) -> str:
+        pool = self.settings.llm_model_pool
+        if not pool:
+            return self.settings.llm_model
+        if self.settings.llm_model.strip().lower() in {"random", "auto", "openrouter/free"} or len(pool) > 1:
+            return random.choice(pool)
+        return pool[0]
+
     async def complete_json(self, *, system: str, user: str, schema_name: str) -> LLMResult:
         if not self.available:
             raise LLMError("provider_unavailable", "LLM_API_KEY and LLM_BASE_URL are not configured")
         body = {
-            "model": self.settings.llm_model,
+            "model": self.pick_model(),
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

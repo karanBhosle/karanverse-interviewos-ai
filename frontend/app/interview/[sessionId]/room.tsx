@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { VoiceOrb, voiceOrbMode } from "@/features/speech/voice-orb";
 import { useSpeechInterview } from "@/features/speech/use-speech-interview";
 import { useWebcam } from "@/features/video-feedback/use-webcam";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -15,11 +16,17 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api/client";
 import { useMe, useSession } from "@/lib/api/hooks";
-import type { Evaluation, Session } from "@/types";
+import type { Evaluation, InterviewerTurn, Session } from "@/types";
 
 function firstName(value?: string | null) {
   const name = (value || "").trim().split(/\s+/)[0];
   return name || "there";
+}
+
+type ChatLine = { id: string; role: "interviewer" | "you"; text: string };
+
+function lineId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export function InterviewRoom({ sessionId }: { sessionId: string }) {
@@ -32,10 +39,14 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [phase, setPhase] = useState<"welcome" | "asking" | "listening">("welcome");
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [thinking, setThinking] = useState(false);
+  const threadRef = useRef<HTMLDivElement | null>(null);
   const [consent, setConsent] = useState(false);
   const [starting, setStarting] = useState(false);
   const usedSpeechRef = useRef(false);
   const askedQuestionIdRef = useRef<string | null>(null);
+  const submittingRef = useRef(false);
   const answerRef = useRef("");
   const current = session ?? query.data;
   const speechAssisted = Boolean(current?.speech_assisted);
@@ -60,33 +71,65 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
     if (!speechAssisted) return;
     const live = [speech.transcript, speech.interim].filter(Boolean).join(" ").trim();
     if (live) setAnswer(live);
+    setLines((prev) => {
+      const rest = prev.filter((line) => line.id !== "live");
+      if (!live) return rest;
+      return [...rest, { id: "live", role: "you", text: live }];
+    });
   }, [speech.transcript, speech.interim, speechAssisted]);
 
+  useEffect(() => {
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
+  }, [lines, thinking, speech.interim]);
+
   const submitAnswer = useCallback(async () => {
-    if (!current || !question) return;
+    if (!current || !question || submittingRef.current) return;
     const text = answerRef.current.trim();
     if (!text) return;
+    submittingRef.current = true;
     speech.pauseAnswerTurn();
     speech.stopSpeaking();
+    setThinking(true);
+    setLines((prev) => [
+      ...prev.filter((line) => line.id !== "live"),
+      { id: lineId(), role: "you", text },
+    ]);
     try {
-      const result = await api.post<{ session: Session; evaluation: Evaluation }>(
-        `/api/v1/interview-sessions/${current.id}/answers`,
-        {
-          question_id: question.id,
-          raw_text: text,
-          duration_seconds: elapsed,
-          transcript_provenance: usedSpeechRef.current ? "speech_to_text" : "typed",
-          visual_features: current.visual_consent && webcam.active ? webcam.sampleLocalFeatures() : undefined,
-        },
-      );
+      const result = await api.post<{
+        session: Session;
+        evaluation: Evaluation;
+        interviewer_turn?: InterviewerTurn;
+      }>(`/api/v1/interview-sessions/${current.id}/answers`, {
+        question_id: question.id,
+        raw_text: text,
+        duration_seconds: elapsed,
+        transcript_provenance: usedSpeechRef.current ? "speech_to_text" : "typed",
+        visual_features: current.visual_consent && webcam.active ? webcam.sampleLocalFeatures() : undefined,
+      });
       setSession(result.session);
       setEvaluation(result.evaluation);
       setAnswer("");
       usedSpeechRef.current = speechAssisted;
       speech.resetAnswerAudio();
       setError(null);
+      const next = result.session.current_question;
+      const spoken = (result.interviewer_turn?.spoken || result.evaluation.feedback || "").trim();
+      setThinking(false);
+      if (spoken) setLines((prev) => [...prev, { id: lineId(), role: "interviewer", text: spoken }]);
+      if (speechAssisted) {
+        setPhase("asking");
+        if (next) askedQuestionIdRef.current = next.id;
+        if (spoken) await speech.speak(spoken);
+        if (next) {
+          setPhase("listening");
+          await speech.startSpeaking();
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Answer could not be saved");
+    } finally {
+      setThinking(false);
+      submittingRef.current = false;
     }
   }, [current, elapsed, question, speech, speechAssisted, webcam]);
 
@@ -104,10 +147,15 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
     setAnswer("");
     speech.resetAnswerAudio();
     usedSpeechRef.current = true;
+    setLines((prev) => {
+      if (prev.some((line) => line.text === question.prompt)) return prev;
+      return [...prev, { id: lineId(), role: "interviewer", text: question.prompt }];
+    });
     await speech.speak(question.prompt);
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    speech.beginAnswerTurn();
+    await new Promise((resolve) => window.setTimeout(resolve, 280));
+    speech.resetAnswerAudio();
     setPhase("listening");
+    await speech.startSpeaking();
   }, [question, speech]);
 
   useEffect(() => {
@@ -139,23 +187,32 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
       <AppShell>
         <div className="mx-auto max-w-2xl space-y-6">
           <div>
-            <h1 className="text-2xl font-semibold">Face-to-face interview</h1>
+            <h1 className="text-2xl font-semibold">Virtual interview</h1>
             <p className="text-sm text-muted-foreground">
               {current?.mode.replaceAll("_", " ")} · {current?.difficulty}
             </p>
           </div>
           <Card>
             <CardContent className="space-y-5 pt-6">
+              <VoiceOrb
+                mode={voiceOrbMode({
+                  interviewer: speech.speaking || speech.voiceLoading,
+                  recording: speech.recording,
+                  candidateLevel: speech.micLevel,
+                })}
+                level={speech.speaking || speech.voiceLoading ? 0.55 : speech.micLevel * 8}
+                status="Silver until someone talks. Green is the interviewer. Red is you."
+              />
               <p className="text-lg leading-relaxed">{greeting}</p>
               <p className="text-sm text-muted-foreground">
-                I will only start after you agree. Use Chrome, same as Ask ELSAA. After the question, tap Start
-                speaking and your words appear as you talk.
+                This is a live conversation, not a form. I react to what you say, then we keep talking. Pause for 5
+                seconds when you finish a thought.
               </p>
               <label className="flex items-start gap-3 text-sm">
                 <Checkbox checked={consent} onCheckedChange={(value) => setConsent(Boolean(value))} />
                 <span>
-                  I consent to microphone use for this session. My voice will be transcribed in this browser and will
-                  not be uploaded as audio.
+                  I consent to microphone use for this session. Answers are transcribed on this device for free.
+                  Scoring uses the transcript.
                 </span>
               </label>
               {error || speech.error ? (
@@ -189,6 +246,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
                     setError(null);
                     usedSpeechRef.current = true;
                     try {
+                      setLines([{ id: lineId(), role: "interviewer", text: greeting }]);
                       await speech.armMicrophone();
                       setPhase("asking");
                       await askCurrentQuestion();
@@ -222,7 +280,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-2xl font-semibold">
-                {current?.webcam_assisted && speechAssisted ? "Face-to-face interview" : "Interview room"}
+                {speechAssisted ? "Live interview session" : "Interview room"}
               </h1>
               <p className="text-sm text-muted-foreground">
                 {current?.mode.replaceAll("_", " ")} · {current?.difficulty}
@@ -243,45 +301,54 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
           {question ? (
             <Card>
               <CardContent className="space-y-5 pt-6">
-                <p className="text-xl leading-relaxed">{question.prompt}</p>
                 {speechAssisted ? (
-                  <div className="space-y-3">
-                    <div className="min-h-24 rounded-md border border-border bg-muted/30 p-4 text-base leading-relaxed">
-                      {[speech.transcript, speech.interim].filter(Boolean).join(" ").trim() || (
-                        <span className="text-muted-foreground">
-                          {speech.recording
-                            ? "Listening — speak now."
-                            : "Tap Start speaking, then talk. Your words appear here."}
-                        </span>
-                      )}
-                    </div>
-                    {speech.transcript || speech.interim ? (
-                      <p className="text-sm text-emerald-400">
-                        Heard: {[speech.transcript, speech.interim].filter(Boolean).join(" ")}
-                      </p>
-                    ) : null}
-                    <div className="h-2 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full bg-emerald-500 transition-[width]"
-                        style={{ width: `${Math.min(100, Math.round(speech.micLevel * 500))}%` }}
-                      />
-                    </div>
-                    <p className="text-sm text-muted-foreground">{speech.listenStatus}</p>
-                    {speech.silenceLeft !== null ? (
-                      <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-base font-medium">
-                        Pause detected. Continuing in {speech.silenceLeft}s. Keep talking to stay on this answer.
-                      </p>
-                    ) : null}
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant={speech.recording ? "outline" : "default"}
-                        onClick={() => void speech.startSpeaking()}
-                      >
-                        {speech.recording ? "Listening…" : "Start speaking"}
-                      </Button>
-                      <Button variant="outline" onClick={() => void submitAnswer()} disabled={!answer.trim()}>
-                        I am done
-                      </Button>
+                  <div className="space-y-4">
+                    <VoiceOrb
+                      size="sm"
+                      mode={voiceOrbMode({
+                        interviewer: speech.speaking || speech.voiceLoading,
+                        recording: speech.recording,
+                        candidateLevel: speech.micLevel,
+                      })}
+                      level={
+                        speech.speaking || speech.voiceLoading
+                          ? 0.58
+                          : Math.min(1, speech.micLevel * 10)
+                      }
+                      status={
+                        thinking
+                          ? "Thinking about your answer…"
+                          : speech.silenceLeft !== null
+                            ? `Got it. Continuing in ${speech.silenceLeft}s.`
+                            : speech.listenStatus
+                      }
+                    />
+                    <div
+                      ref={threadRef}
+                      className="max-h-[48vh] space-y-3 overflow-y-auto rounded-xl border border-border bg-muted/20 p-4"
+                    >
+                      {lines.map((line) => (
+                        <div
+                          key={line.id}
+                          className={line.role === "you" ? "flex justify-end" : "flex justify-start"}
+                        >
+                          <div
+                            className={
+                              line.role === "you"
+                                ? "max-w-[85%] rounded-2xl rounded-br-md bg-rose-500/15 px-4 py-3 text-sm leading-relaxed"
+                                : "max-w-[85%] rounded-2xl rounded-bl-md bg-emerald-500/10 px-4 py-3 text-sm leading-relaxed"
+                            }
+                          >
+                            <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                              {line.role === "you" ? "You" : "Neerja"}
+                            </p>
+                            <p>{line.text}</p>
+                          </div>
+                        </div>
+                      ))}
+                      {thinking ? (
+                        <p className="text-sm text-muted-foreground">Neerja is thinking…</p>
+                      ) : null}
                     </div>
                     {speech.error ? (
                       <Alert>
@@ -291,6 +358,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
                   </div>
                 ) : (
                   <>
+                    <p className="text-xl leading-relaxed">{question.prompt}</p>
                     <p className="text-xs text-muted-foreground">Learning objective: {question.learning_objective}</p>
                     <Textarea
                       rows={10}
@@ -360,7 +428,7 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
         <aside className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Session</CardTitle>
+              <CardTitle className="text-base">Live session</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm text-muted-foreground">
               <p>Elapsed question time: {elapsed}s</p>

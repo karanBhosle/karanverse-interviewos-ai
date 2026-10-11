@@ -50,6 +50,39 @@ def test_parse_json_object():
     assert json.dumps(parse_json_object('{"ok": true}'))
 
 
+def test_strips_pasted_openrouter_key_prefix():
+    settings = Settings(_env_file=None, llm_api_key="ai- sk-or-v1-testkey")
+    assert settings.llm_api_key == "sk-or-v1-testkey"
+
+
+def test_random_openrouter_model_pool():
+    settings = Settings(
+        _env_file=None,
+        llm_api_key="sk-or-v1-test",
+        llm_base_url="https://openrouter.ai/api/v1",
+        llm_model="random",
+        llm_models="google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3.5-lightning:free",
+    )
+    provider = CompatibleLLMProvider(settings=settings)
+    assert settings.llm_configured
+    assert set(settings.llm_model_pool) == {
+        "google/gemma-4-26b-a4b-it:free",
+        "nvidia/nemotron-3.5-lightning:free",
+    }
+    assert provider.pick_model() in settings.llm_model_pool
+
+
+def test_openrouter_keeps_only_free_models():
+    settings = Settings(
+        _env_file=None,
+        llm_api_key="sk-or-v1-test",
+        llm_base_url="https://openrouter.ai/api/v1",
+        llm_model="random",
+        llm_models="openai/gpt-4o-mini,openrouter/free",
+    )
+    assert settings.llm_model_pool == ["openrouter/free"]
+
+
 def test_legacy_openrouter_env_alias(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
